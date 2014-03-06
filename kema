@@ -1,0 +1,307 @@
+#!/bin/sh
+# 
+# Copyright (C) 2014 Raphael MONROUZEAU <boulon@gmail.com> 
+# 
+# DO WHAT THE HECK YOU WANT TO PUBLIC LICENSE 
+# TERMS AND CONDITIONS FOR COPYING, DISTRIBUTION
+# AND MODIFICATION 
+# 
+# 0. You just DO WHAT THE HECK YOU WANT TO.
+
+export KEMA_VERSION="1.0.0"
+
+setenv_build_scheme_flags(){
+    case "$build_scheme" in
+        "std")
+            export CFLAGS="-O2 -DNDEBUG"
+            ;;
+        "dbg")
+            export CFLAGS="-g3"
+            ;;
+        "san")
+            export CFLAGS="-g3"
+            ;;
+    esac
+}
+
+setup_colors(){
+    # First try to guess if terminal supports colors, if not deactivate them
+
+    case "$activate_colors" in
+        ""|auto)
+            activate_colors=auto ;;
+        "yes"|"y"|"YES"|"Y"|"Yes")
+            activate_colors=yes ;;
+        "no"|"n"|"NO"|"N"|"No")
+            activate_colors=no ;;
+        *)
+            unknown_value=$activate_colors
+            activate_colors=auto ;;
+    esac
+
+    #if [ -x /usr/bin/tput ] && tput setaf 1 >&/dev/null; then
+    if [ "$activate_colors" = "auto" ]; then
+        colors_number=$(tput colors 2>/dev/null)
+        if [ $? = 0 -a "$colors_number" -gt 2 ]; then
+            activate_colors=yes
+        else
+            activate_colors=no
+        fi
+    fi
+
+    if [ "$activate_colors" = "no" ]; then
+        color_red=""
+        color_green=""
+        color_blue=""
+        color_yellow=""
+        color_magenta=""
+        color_cyan=""
+        color_white=""
+        color_bold=""
+        color_bright_red=""
+        color_bright_green=""
+        color_bright_blue=""
+        color_bright_yellow=""
+        color_bright_magenta=""
+        color_bright_cyan=""
+        color_bright_white=""
+        color_reset=""
+    else
+        # Let's assume ECMA 48 support
+        #color_red="`tput setf 4`"
+        #color_green="`tput setf 2`"
+        #color_blue="`tput setf 1`"
+        #color_yellow="`tput setf 6`"
+        #color_magenta="`tput setf 5`"
+        #color_cyan="`tput setf 3`"
+        #color_white="`tput setf 7`"
+        #color_bold="`tput bold`"
+        #color_reset="`tput sgr0`"
+        color_red="\e[31m"
+        color_green="\e[32m"
+        color_blue="\e[34m"
+        color_yellow="\e[33m"
+        color_magenta="\e[35m"
+        color_cyan="\e[36m"
+        color_white="\e[37m"
+        color_bold="\e[1m"
+        color_bright_red="$color_bold$color_red"
+        color_bright_green="$color_bold$color_green"
+        color_bright_blue="$color_bold$color_blue"
+        color_bright_yellow="$color_bold$color_yellow"
+        color_bright_magenta="$color_bold$color_magenta"
+        color_bright_cyan="$color_bold$color_cyan"
+        color_bright_white="$color_bold$color_white"
+        color_reset="\e[0m"
+    fi
+
+    if [ ! -z "$unknown_value" ]; then
+        log_notice "Unknown activate_colors value \`%s': Reverted to auto\n" "$unknown_value"
+    fi
+}
+
+log_debug(){
+    if (($verbosity<4)); then return; fi
+    local fmt=$1
+    shift
+    printf " $color_magenta* $color_reset$fmt\n" "$@"
+}
+
+log_info(){
+    if (($verbosity<3)); then return; fi
+    local fmt=$1
+    shift
+    printf " $color_magenta* $color_reset$color_bold$fmt$color_reset\n" "$@"
+}
+
+log_notice(){
+    if (($verbosity<2)); then return; fi
+    local fmt=$1
+    shift
+    printf " $color_magenta* $color_bright_cyan$fmt$color_reset\n" "$@"
+}
+
+log_error(){
+    if (($verbosity<1)); then return; fi
+    local fmt=$1
+    shift
+    printf " $color_magenta* $color_red$fmt$color_reset\n" "$@"
+}
+
+main(){
+
+    set -e
+
+    # First handle arguments: find source directory by recursing till 3 times
+    # looking in ancestor directories for a configure.ac file and get the build
+    # scheme.
+
+    #source_dir=$(dirname "$1")
+    #for i in 1 2; do
+    #    [ -e "$source_dir/configure.ac" ] && break
+    #    source_dir=$(dirname "$source_dir")
+    #done
+
+    source_dir=`pwd -P`
+
+    [ ! -e "$source_dir/configure.ac" ] && {
+        printf "Impossible to find a configure.ac file, are you sure this is\n"
+        printf "an autotools enabled project ?"
+        exit 255
+    }
+
+    case "$2" in
+        "san"|"dbg"|"std") build_scheme="$2";;
+        "") build_scheme="std" ;;
+        *)  log_notice "Unknown build scheme \`%s': Reverting to \`%s'\n" "$2" "$build_scheme" ;;
+    esac
+
+    # From that source directory, infer project name, version and dependancies
+
+    dependencies_list=$(grep 'AC_ARG_WITH(' "$source_dir/configure.ac" \
+                      | sed -E 's/AC_ARG_WITH\([[:space:]]*\[?([a-zA-Z\._-]+).*/\1/')
+
+    project_name=$(
+        (printf "%s\n" "define(\`AC_INIT',\`\$1')dnl";
+         grep '^[[:space:]]*AC_INIT(' "$source_dir/configure.ac") \
+         | m4 | sed -e 's/[[:space:]]*\[//' -e 's/][[:space:]]*$//'
+    )
+
+    project_version=$(
+        (printf "%s\n" "define(\`AC_INIT',\`\$2')dnl";
+         grep '^[[:space:]]*AC_INIT(' "$source_dir/configure.ac") \
+         | m4 | sed -e 's/[[:space:]]*\[//' -e 's/][[:space:]]*$//'
+    )
+    
+    project_bugtracker=$(
+        (printf "%s\n" "define(\`AC_INIT',\`\$3')dnl";
+         grep '^[[:space:]]*AC_INIT(' "$source_dir/configure.ac") \
+         | m4 | sed -e 's/[[:space:]]*\[//' -e 's/][[:space:]]*$//'
+    )
+
+    local PATTERN='^([0-9]+)(\.([0-9]+)(\.([0-9]+))?)?.*'
+
+    project_major=$(printf "%s" "$project_version"|sed -E "s/$PATTERN/\1/")
+    [ a"$project_major"b = ab ] && project_major=1
+    project_xmajor=$(printf "%02d" "$project_major")
+
+    project_minor=$(printf "%s" "$project_version"|sed -E "s/$PATTERN/\3/")
+    [ a"$project_minor"b = ab ] && project_minor=1
+    project_xminor=$(printf "%02d" "$project_minor")
+
+    project_correction=$(printf "%s" "$project_version"|sed -E "s/$PATTERN/\5/")
+    [ a"$project_correction"b = ab ] && project_correction=1
+    project_xcorrection=$(printf "%02d" "$project_correction")
+
+    unset PATTERN
+
+    # Load project settings if any (unadvised), then host settings, then user
+    # settings that so may override any other settings
+
+    [ -e /etc/kema/kema.conf ] && . /etc/kema/kema.conf
+    [ -e "$source_dir/kema.conf" ] && . "$source_dir/kema.conf"
+    [ -e ~/.config/kema/kema.conf ] && . ~/.config/kema/kema.conf
+
+    set -e
+
+    # We can configure libraries...
+
+    setup_colors
+
+    # We can compute variables now...
+
+    if [ -z "$build_scheme" ]; then
+        build_scheme="std"
+    fi
+
+    case "$2" in
+        "san"|"dbg"|"std") build_scheme="$2";;
+        "") build_scheme="std" ;;
+        *)  log_notice "Unknown build scheme \`%s': Reverting to \`%s'\n" "$2" "$build_scheme" ;;
+    esac
+
+    if [ -z "$build_dir" ]; then
+        if ! [ -z "$build_dir_expr" ]; then
+            build_dir=$(eval 'printf '"$build_dir_expr")
+        else
+            build_dir="$source_dir/build/$build_scheme"
+        fi
+    fi
+
+    if [ -z "$prefix" -a ! -z "$prefix_expr" ]; then
+        prefix=$(eval 'printf '"$prefix_expr")
+    fi
+
+    mkdir -p "$build_dir"
+    cd "$build_dir"
+
+    setenv_build_scheme_flags "$build_scheme"
+
+    [ ! -e Makefile ] && {
+        configure_command="../../configure"
+        if [ ! -z "$prefix" ]; then
+            configure_command="$configure_command --prefix=$prefix";
+        fi
+
+        for dependency in $dependencies_list; do
+            name=$(printf "%s" "$dependency"|sed -E 's/[\.-]/_/g')
+            value=$(eval printf "%s" '"$with_'"$name"'"')
+            if [ ! -z "$value" ]; then
+                dependencies="$dependencies --with-$dependency=$value"
+            fi
+        done
+
+        configure_command="$configure_command $dependencies"
+
+        log_notice "Configuring..."
+        log_debug "Configuring command is \`%s'" "$configure_command"
+        if (($verbosity>=3)); then
+            $configure_command
+        else
+            $configure_command >/dev/null
+        fi
+    }
+
+    log_notice "Building..."
+    log_debug "Building command is \`%s'" "make"
+    if (($verbosity>=3)); then
+        make
+    else
+        make >/dev/null
+    fi
+
+    exit 0
+}
+
+args=`getopt vqd:Vh $*`
+if [ $? != 0 ]; then
+    echo 'Usage: ...'
+    exit 2
+fi
+set -- $args
+
+# Verbosity can be 0 (silent) 1 (error) 2 (notice) 3 (info) 4 (debug)
+verbosity=1
+
+for i; do case "$i" in
+    -q) if (($verbosity>0)); then let verbosity=$verbosity-1; fi; shift;;
+    -v) if (($verbosity<4)); then let verbosity=$verbosity+1; fi; shift;;
+    -V) printf "%s version %s\n" "$0" "$KEMA_VERSION"
+    -d)
+        source_dir="$2"; shift;
+        shift;;
+    --) shift; break;;
+esac; done
+
+# first test with which or something if ever it is in PATH
+
+SCRIPT=$(readlink -f "$0" 2>/dev/null)
+if (($? == 0)); then main "$SCRIPT" "$1"; fi
+
+SCRIPT=$(python -c 'import os,sys; print os.path.realpath(sys.argv[1])' "$0")
+if (($? == 0)); then main "$SCRIPT" "$1"; fi
+
+SCRIPT=$(perl -MCwd=realpath -e "print realpath '$0'") 
+if (($? == 0)); then main "$SCRIPT" "$1"; fi
+     
+
