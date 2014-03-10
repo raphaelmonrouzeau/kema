@@ -1,4 +1,14 @@
-# KEMA - a simple shell build script
+# KEMA
+
+A simple shell build script for autotools enabled projects.
+
+```sh
+kema/kema
+```
+
+```sh
+kema/kema dbg
+```
 
 ## Configuration
 
